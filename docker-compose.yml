@@ -1,0 +1,63 @@
+version: "3.9"
+services:
+  db:
+    image: postgres:13.3
+    environment:
+      - PGDATA=/var/lib/postgresql/data/pgdata
+    env_file:
+      - .env
+    volumes:
+      - ./pg-data:/var/lib/postgresql/data/pgdata
+    ports:
+      - "5432:5432"
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    ports:
+      - "15672:15672"
+      - "5672:5672"
+  api:
+    build: .
+    image: finance-news
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    expose:
+      - "8000"
+    restart: always
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - ./gunicorn.py:/etc/gunicorn.py
+      - /tmp/statics:/api
+    command: gunicorn finance_news.wsgi -c gunicorn.py --error-logfile /app/gunicorn.log
+    tty: true
+    depends_on:
+      - db
+      - rabbitmq
+  worker:
+    image: finance-news
+    env_file:
+      - .env
+    environment:
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL}
+    command: celery -A finance_news worker -Q celery --loglevel=INFO --concurrency=5 -n celery@%h -Ofair --without-gossip --without-mingle
+    volumes:
+    - /tmp/statics:/api
+    depends_on:
+      - rabbitmq
+    restart: always
+  beat:
+    image: finance-news
+    env_file:
+      - .env
+    environment:
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL}
+    command: celery -A finance_news beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    volumes:
+      - /tmp/statics:/api
+    depends_on:
+      - rabbitmq
+    restart: always
+volumes:
+  pg-data:
+  api:
